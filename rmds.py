@@ -1,79 +1,68 @@
 #!/usr/bin/python3
 
+# Copyright @ Balz Guenat 2018
+
 import http.server as srv
 import json
 import subprocess
 import os
 
+VERSION = '0.2'
+
+WRITE_DEBUG_FILES = False
 
 cp = subprocess.run(['pandoc', '--version'], stdout=subprocess.PIPE)
 pandocVersion = cp.stdout.decode().split('\n')[0].split(' ')[1]
 
-def readLine(bytes):
-	s = ''
-	while True:
-		s = s + bytes.read(1).decode()
-		if s.endswith('\r\n'):
-			return s
+def readLine(bytestream):
+	bs = bytestream.read(2)
+	while not bs.endswith(b'\r\n'):
+		bs = bs + bytestream.read(1)
+	return bs
 			
-def readChunks(bytes):
-	length = int('0x' + readLine(bytes)[:-2], 16)
-	while length != 0:
-		# print("chunk length = " + str(length))
-		chunk = bytes.read(length).decode()
-		bytes.read(2) # consume \r\n after chunk
-		# print(chunk)
-		yield chunk
-		length = int('0x' + readLine(bytes)[:-2], 16)
-	# print("last chunk detected")
+def readChunks(bytestream):
+	while True:
+		length = int(readLine(bytestream), 16)
+		if length == 0:
+			return
+		yield bytestream.read(length)
+		bytestream.read(2) # consume \r\n after chunk
 	
-def readChunked(bytes):
-	s = ''
-	for chunk in readChunks(bytes):
+def readChunked(bytestream):
+	s = b''
+	for chunk in readChunks(bytestream):
 		s = s + chunk
 	return s
 
 class MarkdownServer(srv.BaseHTTPRequestHandler):
 	def do_POST(self):
-		# if self.headers['Content-type'] != ''
-		encodingHeader = self.headers['Transfer-Encoding']
-		if encodingHeader and encodingHeader.split(',').contains('chunked'):
+		if 'Transfer-Encoding' in self.headers \
+		and self.headers['Transfer-Encoding'] \
+		and encodingHeader.contains('chunked'):
 			print('content is chunked')
 			postData = readChunked(self.rfile)
 		else:
 			contentLength = int(self.headers['Content-length'])
 			postData = self.rfile.read(contentLength)
-
-		# print(self.requestline)
-		# contentLength = int('0x' + self.rfile.read(2).decode(), 16)
-		# print(self.headers)
-		# postData = json.load(self.rfile)
 		
-		# contentLength = 2
-		# postData = self.rfile.read(contentLength + 6).decode()
-		
-		print(postData.decode().encode('UTF-8'))
 		if self.headers['Content-type'] and 'text/markdown' in self.headers['Content-type']:
 			text = postData
 		else:
 			text = json.loads(postData)['text'].encode()
-		with open('out2.html', 'bw') as outFile:
-			outFile.write(text)
-		# subprocess.run(['echo', r'%cd%'])
+
+		if WRITE_DEBUG_FILES:
+			with open('rmdsin.md', 'bw') as f:
+				f.write(text)
 		cp = subprocess.run(['pandoc', '-c', os.path.realpath('github.css'), '--self-contained'], input=text, stdout=subprocess.PIPE)
 		self.send_response(200)
 		self.send_header('Content-type', 'text/html; charset=utf-8')
 		self.send_header('Content-length', len(cp.stdout))
 		self.send_header('Pandoc-version', pandocVersion)
 		self.end_headers()
-		with open('out.html', 'w') as outFile:
-			outFile.write(cp.stdout.decode())
+		if WRITE_DEBUG_FILES:
+			with open('rmdsout.html', 'bw') as f:
+				f.write(cp.stdout)
 		self.wfile.write(cp.stdout)
-		# self.wfile.write(b'<html><body>')
-		# self.wfile.write(text.encode())
-		# self.wfile.write(self.rfile.read())
-		# self.wfile.write(b'</body></html>')
-		# self.wfile.write(eof)
 	def do_GET(self):
 		self.send_response(200)
 		self.send_header('Content-type', 'text/html')
