@@ -9,6 +9,7 @@ import os
 
 VERSION = '0.2'
 
+PORT = 8001
 WRITE_DEBUG_FILES = False
 
 cp = subprocess.run(['pandoc', '--version'], stdout=subprocess.PIPE)
@@ -47,13 +48,20 @@ class MarkdownServer(srv.BaseHTTPRequestHandler):
 		
 		if self.headers['Content-type'] and 'text/markdown' in self.headers['Content-type']:
 			text = postData
+			title = 'Untitled'
 		else:
-			text = json.loads(postData)['text'].encode()
+			jsonData = json.loads(postData)
+			text = jsonData['text'].encode()
+			title = jsonData['filename'] if 'filename' in jsonData else 'Untitled'
 
 		if WRITE_DEBUG_FILES:
 			with open('rmdsin.md', 'bw') as f:
 				f.write(text)
-		cp = subprocess.run(['pandoc', '-c', os.path.realpath('github.css'), '--self-contained'], input=text, stdout=subprocess.PIPE)
+		cp = subprocess.run([
+			'pandoc', 
+			'-c', os.path.realpath('github.css'), '--self-contained', 
+			'--metadata', 'pagetitle=\"{}\"'.format(title)
+			], input=text, stdout=subprocess.PIPE)
 		self.send_response(200)
 		self.send_header('Content-type', 'text/html; charset=utf-8')
 		self.send_header('Content-length', len(cp.stdout))
@@ -70,7 +78,7 @@ class MarkdownServer(srv.BaseHTTPRequestHandler):
 		self.wfile.write(b'Try POST.')
 	
 def run():
-	httpd = srv.HTTPServer(('localhost', 8001), MarkdownServer)
+	httpd = srv.HTTPServer(('localhost', PORT), MarkdownServer)
 	httpd.serve_forever()
 
 print('Starting Markdown Server...')
